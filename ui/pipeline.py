@@ -88,7 +88,7 @@ def run_analysis(file_name: str, data: bytes, jd_text: str, step: StepFn = lambd
     step(":material/description: Extracting text and checking layout")
     resume_text, layout = extract_resume(file_name, data)
     if not resume_text.strip():
-        raise ValueError("No text could be extracted. Is the file a scanned image?")
+        raise ValueError("No text could be extracted from this file. Try a text-based PDF or a .docx.")
 
     jd_match = None
     if jd_text.strip():
