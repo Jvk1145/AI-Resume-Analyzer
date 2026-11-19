@@ -32,21 +32,21 @@ def _list_gemini_models(api_key: str) -> list[str]:
 
 
 def _call_once(api_key: str, prompt: str, system_prompt: str) -> str:
-    """Make one generateContent request with a single key.
+    """Make one JSON-mode generateContent request with a single key."""
+    parts = [{"text": f"{system_prompt}\n\nUser Input:\n{prompt}"}]
+    config = {"temperature": 0.2, "maxOutputTokens": 4000, "response_mime_type": "application/json"}
+    return _generate(api_key, parts, config)
+
+
+def _generate(api_key: str, parts: list[dict[str, Any]], config: dict[str, Any]) -> str:
+    """POST one generateContent request and return the first text part.
 
     The key goes in the ``x-goog-api-key`` header (never the URL), and the raw
     error body is only logged, never shown in the UI.
     """
     model = resolve_model("Gemini", "GEMINI_MODEL", GEMINI_PREFERRED_MODELS,
                           lambda: _list_gemini_models(api_key))
-    payload: dict[str, Any] = {
-        "contents": [{"parts": [{"text": f"{system_prompt}\n\nUser Input:\n{prompt}"}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 4000,
-            "response_mime_type": "application/json",
-        },
-    }
+    payload: dict[str, Any] = {"contents": [{"parts": parts}], "generationConfig": config}
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     response = requests.post(f"{GEMINI_BASE}/models/{model}:generateContent", json=payload,
                              headers=headers, timeout=TIMEOUT_SECONDS)
@@ -76,6 +76,44 @@ def call_gemini(prompt: str, system_prompt: str) -> str:
             return _call_once(api_key, prompt, system_prompt)
         except Exception as exc:  # noqa: BLE001 - try the next key
             logger.warning("Gemini key #%d failed: %s", idx, exc)
+            last_error = exc
+    assert last_error is not None
+    raise last_error
+
+
+OCR_PROMPT = (
+    "Transcribe ALL text in these resume page images exactly as written, top to bottom, page by page. "
+    "Keep section headings on their own lines, keep line breaks, and start each bullet point with '• '. "
+    "Do not summarize, correct, translate or add anything. Output only the transcribed text."
+)
+
+
+def transcribe_images(images: list[tuple[bytes, str]]) -> str:
+    """OCR resume page images with Gemini vision, trying each configured key.
+
+    Args:
+        images: ``(image_bytes, mime_type)`` pairs, e.g. PNG pages of a scanned PDF.
+
+    Raises:
+        ValueError: if no Gemini key is configured.
+        Exception: the last key's error if every key fails.
+    """
+    import base64
+
+    keys = get_keys("GEMINI_API_KEY")
+    if not keys:
+        raise ValueError("GEMINI_API_KEY is not set in environment variables or Streamlit secrets.")
+    parts: list[dict[str, Any]] = [{"text": OCR_PROMPT}]
+    parts += [{"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode("ascii")}}
+              for data, mime in images]
+    config = {"temperature": 0.0, "maxOutputTokens": 8000}
+
+    last_error: Exception | None = None
+    for idx, api_key in enumerate(keys, start=1):
+        try:
+            return _generate(api_key, parts, config)
+        except Exception as exc:  # noqa: BLE001 - try the next key
+            logger.warning("Gemini OCR key #%d failed: %s", idx, exc)
             last_error = exc
     assert last_error is not None
     raise last_error

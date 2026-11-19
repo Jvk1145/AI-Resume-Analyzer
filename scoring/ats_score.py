@@ -266,6 +266,11 @@ def score_layout(layout: Optional[Mapping[str, Any]]) -> Category:
     """Start at 5; tables -2, multiple columns -2, images -1, header/footer text -1."""
     if not layout:
         return _category("layout", 1, ["Layout could not be checked for this file."])
+    if layout.get("image_only"):
+        return _category("layout", 0, [
+            "✗ The resume is an image with no text layer, so most ATS software reads nothing from it (-5).",
+            "It was read here with OCR. Export it from Word or Google Docs as a text PDF to fix this.",
+        ])
     points, reasons = 5.0, []
     checks = (
         ("has_tables", 2, "Tables found: many ATS parsers read table cells out of order."),

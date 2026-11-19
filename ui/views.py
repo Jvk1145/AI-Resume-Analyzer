@@ -89,6 +89,14 @@ def render_summary(result: dict[str, Any]) -> None:
         f":material/description: {result['file_name']} · parsed by {result['provider']} · "
         "contact details redacted before sending"
     )
+    method = result.get("read_method", "text")
+    if method != "text":
+        st.warning(
+            f"Your resume has no selectable text, so it was read with {method}. Most ATS software can't read "
+            "image-based resumes at all. Export it from Word or Google Docs as a text PDF before applying."
+            + (" The page images were sent to Gemini for OCR." if method == "Gemini OCR" else ""),
+            icon=":material/document_scanner:",
+        )
 
 
 # --------------------------------------------------------------------------- tabs

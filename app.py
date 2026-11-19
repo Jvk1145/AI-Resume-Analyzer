@@ -8,6 +8,7 @@ import logging
 
 import streamlit as st
 
+from parsers.reader import SUPPORTED_TYPES
 from storage.history import add_record, fetch_history
 from ui import views
 from ui.pipeline import run_analysis
@@ -50,8 +51,8 @@ with input_box:
     upload_col, jd_col = st.columns([2, 3], gap="medium")
     with upload_col:
         uploaded_file = st.file_uploader(
-            "Resume", type=["pdf", "docx"], key="resume_file",
-            help="PDF or DOCX. Scanned images can't be read.",
+            "Resume", type=[t.lstrip(".") for t in SUPPORTED_TYPES], key="resume_file",
+            help="PDF, DOCX, TXT or an image (PNG/JPG). Scans and image-only PDFs are read with OCR.",
         )
     with jd_col:
         jd_input = st.text_area(

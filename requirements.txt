@@ -4,6 +4,9 @@ python-dotenv
 requests
 python-docx
 pdfplumber
+pypdfium2
+Pillow
+pytesseract
 pydantic
 pandas
 pytest

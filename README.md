@@ -8,6 +8,7 @@ so the same resume always gets the same score, and each point comes with a reaso
 
 ## Features
 
+- **Reads any resume**: PDF, DOCX (including text boxes and headers), TXT and images (PNG/JPG). Scans and image-only PDFs, such as many Canva exports, are read with OCR: local Tesseract first, then Gemini vision. The app warns you, because real ATS software can't read image resumes.
 - **Explainable ATS score (0-100)**: 8 rule-based categories, each with points and plain-language reasons.
 - **JD matching**: about 300 tech and soft skills with synonyms ("js" → JavaScript, "postgres" →
   PostgreSQL). Each skill is marked required or nice-to-have, the whole resume is searched, and the app shows
@@ -20,7 +21,7 @@ so the same resume always gets the same score, and each point comes with a reaso
 - **Cover letter generator**: 250-300 words, editable, downloadable as DOCX.
 - **Interview prep**: 8 likely questions, each with a tip that points to your own experience.
 - **Privacy**: email, phone numbers and street addresses are redacted before any text is sent to an AI
-  provider. They are added back only in the DOCX files generated on your machine.
+  provider. The one exception is image-only resumes when Tesseract isn't installed: their page images are sent to Gemini for OCR, and the app tells you when this happens. They are added back only in the DOCX files generated on your machine.
 - **History**: each analysis (date, file name, ATS score, JD match %, top missing skills) is saved to a local
   SQLite file and shown as a chart and table.
 
@@ -89,6 +90,8 @@ pip install -r requirements.txt
 cp .env.example .env      # then paste your keys into .env
 streamlit run app.py
 ```
+
+Optional, for private local OCR of scanned resumes: install Tesseract (Windows: `winget install UB-Mannheim.TesseractOCR`, macOS: `brew install tesseract`, Linux: `apt install tesseract-ocr`). On Streamlit Cloud it's installed automatically from `packages.txt`.
 
 `.env` keys (the `_2` keys are optional backups, tried if the first key fails):
 
