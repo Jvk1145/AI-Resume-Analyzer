@@ -1,145 +1,117 @@
+"""Streamlit entry point for the AI Resume Analyzer.
+
+Flow: upload -> local text + layout extraction -> deterministic JD match and
+ATS score -> redaction -> AI parsing/suggestions (cached) -> tabs.
+Pipeline code lives in ``ui/pipeline.py``; page sections in ``ui/views.py``.
+"""
+import logging
+
 import streamlit as st
-import os
-import tempfile
 
-from parsers.pdf_parser import extract_text_from_pdf
-from parsers.docx_parser import extract_text_from_docx
-from ai.llm_service import process_resume_pipeline
-from scoring.ats_score import calculate_ats_score
-from matching.jd_matcher import calculate_jd_match
-from exporters.docx_exporter import generate_docx
+from storage.history import add_record, fetch_history
+from ui import views
+from ui.pipeline import run_analysis
 
-# Page Configuration
-st.set_page_config(page_title="AI Resume Analyzer", page_icon="📄", layout="wide")
+logging.basicConfig(level=logging.INFO)
 
-st.title("🤖 AI Resume Analyzer & Optimizer")
-st.write("Upload your resume and (optionally) paste a Job Description to get an ATS score and AI-powered suggestions.")
+st.set_page_config(
+    page_title="AI Resume Analyzer",
+    page_icon=":material/description:",
+    layout="wide",
+)
 
-# --- Sidebar Inputs ---
+# --------------------------------------------------------------------------- sidebar
+
 with st.sidebar:
-    st.header("1. Upload Resume")
-    uploaded_file = st.file_uploader("Choose a PDF or DOCX file", type=["pdf", "docx"])
-    
-    st.header("2. Job Description (Optional)")
-    jd_text = st.text_area("Paste the job description here to see how well you match.", height=250)
-    
-    analyze_button = st.button("Analyze Resume", type="primary", use_container_width=True)
+    st.markdown("### :material/description: Resume analyzer")
+    st.caption("Explainable ATS scoring and honest AI help.")
+    with st.expander("How scoring works", icon=":material/help:"):
+        st.markdown(
+            "- Contact info: 10\n- Standard sections: 15\n- JD keywords: 30\n- Action verbs: 10\n"
+            "- Quantified results: 15\n- Bullet quality: 10\n- Length: 5\n- ATS-friendly layout: 5"
+        )
+        st.caption("No job description? The 30 keyword points are shared across the other categories.")
+    st.caption(":material/shield_lock: Email, phone and street address are redacted before any AI call.")
+    if st.session_state.get("result") and st.button("Start over", icon=":material/restart_alt:", width="stretch"):
+        st.session_state.pop("result", None)
+        st.rerun()
 
-# --- Main App Logic ---
-if analyze_button:
-    if not uploaded_file:
-        st.error("⚠️ Please upload a resume first.")
-    else:
-        # Step 1: Execute extraction and AI pipeline completely inside a silent spinner
-        with st.spinner("Analyzing Resume with AI... Please wait."):
-            try:
-                file_ext = uploaded_file.name.split(".")[-1].lower()
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
-                    temp_file.write(uploaded_file.read())
-                    temp_path = temp_file.name
+# --------------------------------------------------------------------------- inputs
 
-                if file_ext == "pdf":
-                    resume_text = extract_text_from_pdf(temp_path)
-                elif file_ext == "docx":
-                    resume_text = extract_text_from_docx(temp_path)
-                else:
-                    st.error("Unsupported file format.")
-                    st.stop()
-                    
-                os.remove(temp_path)
-                
-                # Execute back-end cascade tracking silently
-                resume_json = process_resume_pipeline(resume_text, jd_text)
-                ats_results = calculate_ats_score(resume_json)
-                
-            except Exception as e:
-                st.error(f"❌ An error occurred during analysis: {str(e)}")
-                st.stop()
+current = st.session_state.get("result")
+views.render_hero()
 
-        # Step 2: Display metrics directly on the main viewport outside the loading module
-        st.success("Analysis Complete!")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🎯 Overall ATS Score")
-            score = ats_results.get("total_score", 0)
-            
-            # Subtle optimization color indicators
-            if score >= 80:
-                st.metric(label="Excellent Match Alignment", value=f"{score}/100")
-            elif score >= 60:
-                st.metric(label="Good (Needs minor additions)", value=f"{score}/100")
-            else:
-                st.metric(label="Critical Optimization Required", value=f"{score}/100")
-                
-            st.progress(score / 100)
-            
-            # Clean dynamic dashboard breakdown instead of raw JSON text boxes
-            with st.expander("📊 View Detailed Score Breakdown", expanded=True):
-                breakdown = ats_results.get("breakdown", {})
-                if isinstance(breakdown, dict):
-                    for category, value in breakdown.items():
-                        clean_name = str(category).replace("_", " ").title()
-                        if isinstance(value, (int, float)):
-                            st.write(f"**{clean_name}:** {value}/100")
-                            st.progress(int(value) / 100)
-                        else:
-                            st.write(f"**{clean_name}:** {value}")
-                else:
-                    st.info("No explicit metrics breakdown available.")
-        
-        with col2:
-            if jd_text:
-                st.subheader("🤝 Job Description Match")
-                match_score = calculate_jd_match(resume_json)
-                st.metric(label="Match Percentage", value=f"{match_score}%")
-                st.progress(match_score / 100)
-                
-                st.markdown("**Missing Skills to Add:**")
-                missing = resume_json.get("missing_skills", [])
-                if missing:
-                    for skill in missing:
-                        st.markdown(f"- ❌ {skill}")
-                else:
-                    st.write("✅ Excellent! You have mapped all primary target skills.")
-            else:
-                st.info("💡 Tip: Paste a Job Description in the sidebar to get a keyword match score.")
+input_box = (
+    st.expander("Analyze another resume or job description", icon=":material/upload_file:")
+    if current
+    else st.container(border=True)
+)
+with input_box:
+    upload_col, jd_col = st.columns([2, 3], gap="medium")
+    with upload_col:
+        uploaded_file = st.file_uploader(
+            "Resume", type=["pdf", "docx"], key="resume_file",
+            help="PDF or DOCX. Scanned images can't be read.",
+        )
+    with jd_col:
+        jd_input = st.text_area(
+            "Job description (optional)", key="jd_text", height=150,
+            placeholder="Paste the job description to see your match, missing skills and a tailored cover letter.",
+        )
+    analyze_clicked = st.button(
+        "Analyze resume", type="primary", icon=":material/auto_awesome:", width="stretch",
+        disabled=uploaded_file is None,
+    )
 
-        st.divider()
-
-        # Step 3: Actionable AI Bullet Point Suggestions Section
-        st.subheader("✍️ AI Bullet Point Suggestions")
-        suggestions = resume_json.get("suggestions", [])
-        
-        if suggestions and isinstance(suggestions, list):
-            for idx, sug in enumerate(suggestions):
-                if isinstance(sug, dict):
-                    with st.container():
-                        st.markdown(f"**Suggestion {idx + 1}:**")
-                        st.warning(f"**Weak:** {sug.get('original_bullet', 'N/A')}")
-                        st.success(f"**Better:** {sug.get('improved_bullet', 'N/A')}")
-                        st.caption(f"*Reason:* {sug.get('reason', 'Formatting enhancement suggestion.')}")
-                        st.write("---")
-        else:
-            st.info("Your bullet points contain high structural metric velocity! No optimization rewrites suggested.")
-        
-        # Step 4: Native Export Download Segment
-        st.divider()
-        st.subheader("📥 Download ATS-Friendly Resume")
-        st.write("We have automatically generated a clean, standardized version of your resume that is guaranteed to be readable by ATS software.")
-        
-        export_path = os.path.join(tempfile.gettempdir(), "ATS_Optimized_Resume.docx")
-        generate_docx(resume_json, export_path)
-        
-        with open(export_path, "rb") as file:
-            st.download_button(
-                label="Download Resume (DOCX)",
-                data=file,
-                file_name="ATS_Optimized_Resume.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                type="primary"
+if analyze_clicked and uploaded_file is not None:
+    with st.status("Analyzing your resume...", expanded=True) as status:
+        try:
+            new_result = run_analysis(uploaded_file.name, uploaded_file.getvalue(), jd_input, step=status.write)
+            jd = new_result["jd_match"]
+            add_record(
+                file_name=uploaded_file.name,
+                ats_score=new_result["ats"]["total_score"],
+                jd_match=jd["match_percentage"] if jd and jd["jd_skill_count"] else None,
+                missing_skills=(jd["missing_required"] + jd["missing_nice"]) if jd else [],
             )
+            st.session_state["result"] = new_result
+            status.update(label="Analysis complete", state="complete", expanded=False)
+            st.session_state["just_analyzed"] = True
+            st.rerun()  # collapse the input card and show results
+        except Exception as exc:  # noqa: BLE001 - show any failure to the user
+            status.update(label="Analysis failed", state="error", expanded=True)
+            st.error(str(exc), title="Something went wrong")
 
-        with st.expander("View Extracted Resume Data (JSON)"):
-            st.json({k: v for k, v in resume_json.items() if k != "suggestions"})
+# --------------------------------------------------------------------------- results
+
+current = st.session_state.get("result")
+if st.session_state.pop("just_analyzed", False):
+    st.toast("Analysis complete", icon=":material/check_circle:")
+
+if not current:
+    views.render_features()
+    if fetch_history():
+        st.subheader("Your progress", icon=":material/history:")
+        views.render_history()
+else:
+    views.render_summary(current)
+    tabs = st.tabs([
+        ":material/analytics: Analysis",
+        ":material/join_inner: JD match",
+        ":material/edit_note: Suggestions",
+        ":material/mail: Cover letter",
+        ":material/forum: Interview prep",
+        ":material/history: History",
+    ])
+    renderers = (
+        views.render_analysis,
+        views.render_jd_match,
+        views.render_suggestions,
+        views.render_cover_letter,
+        views.render_interview,
+    )
+    for tab, render in zip(tabs[:5], renderers):
+        with tab:
+            render(current)
+    with tabs[5]:
+        views.render_history()

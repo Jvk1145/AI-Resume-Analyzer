@@ -1,15 +1,12 @@
-# parsers/pdf_parser.py
+"""Extract text from PDF resumes."""
 import pdfplumber
 
+
 def extract_text_from_pdf(file_path: str) -> str:
-    """Extracts all text from a given PDF file path."""
-    extracted_text = ""
+    """Extract all text from a PDF, page by page."""
     try:
         with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                  extracted_text += text + "\n"
-        return extracted_text.strip()
-    except Exception as e:
-        raise RuntimeError(f"Failed to parse PDF file: {str(e)}")
+            pages = [page.extract_text() or "" for page in pdf.pages]
+    except Exception as exc:  # noqa: BLE001 - pdfplumber raises many error types
+        raise RuntimeError(f"Failed to parse PDF file: {exc}") from exc
+    return "\n".join(p for p in pages if p).strip()

@@ -3,4 +3,7 @@ openai
 python-dotenv
 requests
 python-docx
-pypdf
+pdfplumber
+pydantic
+pandas
+pytest

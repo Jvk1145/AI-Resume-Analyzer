@@ -1,0 +1,76 @@
+# Indigo-accented light/dark theme (based on Streamlit's shadcn-dual template).
+# Users can still switch light/dark from the app's Settings menu.
+
+[theme]
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "10px"
+buttonRadius = "8px"
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+codeFontSize = "0.875rem"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["40px", "28px", "22px", "18px", "16px", "14px"]
+headingFontWeights = [700, 650, 600, 600, 600, 600]
+paddingTop = "1.5rem"
+paddingBottom = "3rem"
+
+[theme.light]
+primaryColor = "#4F46E5"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F7FB"
+codeBackgroundColor = "#F1F2F7"
+textColor = "#0F172A"
+linkColor = "#4F46E5"
+borderColor = "#E3E5EE"
+codeTextColor = "#1E293B"
+grayColor = "#64748B"
+blueColor = "#3B82F6"
+greenColor = "#16A34A"
+redColor = "#DC2626"
+yellowColor = "#CA8A04"
+orangeColor = "#EA580C"
+violetColor = "#7C3AED"
+chartCategoricalColors = ["#4F46E5", "#14B8A6", "#F59E0B", "#EC4899", "#64748B", "#22C55E", "#EF4444"]
+dataframeBorderColor = "#E3E5EE"
+dataframeHeaderBackgroundColor = "#F6F7FB"
+
+[theme.dark]
+primaryColor = "#6366F1"
+backgroundColor = "#0B0F19"
+secondaryBackgroundColor = "#151A28"
+codeBackgroundColor = "#1E2435"
+textColor = "#F1F5F9"
+linkColor = "#A5B4FC"
+borderColor = "#262D40"
+codeTextColor = "#E2E8F0"
+grayColor = "#94A3B8"
+blueColor = "#60A5FA"
+greenColor = "#4ADE80"
+redColor = "#F87171"
+yellowColor = "#FACC15"
+orangeColor = "#FB923C"
+violetColor = "#A78BFA"
+chartCategoricalColors = ["#818CF8", "#2DD4BF", "#FBBF24", "#F472B6", "#94A3B8", "#4ADE80", "#F87171"]
+dataframeBorderColor = "#262D40"
+dataframeHeaderBackgroundColor = "#151A28"
+dataframeHeaderTextColor = "#F1F5F9"
+
+[theme.light.sidebar]
+backgroundColor = "#F6F7FB"
+secondaryBackgroundColor = "#ECEEF5"
+codeBackgroundColor = "#E3E5EE"
+textColor = "#0F172A"
+borderColor = "#E3E5EE"
+primaryColor = "#4F46E5"
+linkColor = "#4F46E5"
+
+[theme.dark.sidebar]
+backgroundColor = "#080B13"
+secondaryBackgroundColor = "#151A28"
+codeBackgroundColor = "#1E2435"
+textColor = "#F1F5F9"
+borderColor = "#262D40"
+primaryColor = "#6366F1"
+linkColor = "#A5B4FC"

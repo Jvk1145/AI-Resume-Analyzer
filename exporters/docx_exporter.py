@@ -1,114 +1,138 @@
+"""Build ATS-friendly DOCX files (resume and cover letter) entirely in memory."""
+import difflib
+import io
+import re
+from typing import Any, Mapping, Optional
+
 import docx
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
-def generate_docx(resume_json: dict, output_path: str) -> str:
-    """
-    Generates a clean, ATS-friendly DOCX resume from the parsed JSON data.
-    Safely handles both dictionary and string formats returned by LLMs.
-    """
-    doc = docx.Document()
-    
-    # 1. Header (Name and Contact Info)
-    name = doc.add_heading(resume_json.get("name", "Name Not Provided"), 0)
-    name.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-    
-    email = resume_json.get("email", "")
-    phone = resume_json.get("phone", "")
-    
-    # Only add contact info if it exists
-    contact_str = " | ".join(filter(None, [email, phone]))
-    if contact_str:
-        contact_info = doc.add_paragraph(contact_str)
-        contact_info.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-    
-    # 2. Skills Section
-    skills_list = resume_json.get("skills", [])
-    if skills_list:
-        doc.add_heading("Skills", level=1)
-        # Ensure skills is a list of strings
-        if isinstance(skills_list, list):
-            doc.add_paragraph(", ".join([str(s) for s in skills_list]))
-        elif isinstance(skills_list, str):
-            doc.add_paragraph(skills_list)
-        
-    # 3. Experience Section
-    experience_list = resume_json.get("experience", [])
-    if experience_list:
-        doc.add_heading("Professional Experience", level=1)
-        for exp in experience_list:
-            if isinstance(exp, dict):
-                p = doc.add_paragraph()
-                p.add_run(f"{exp.get('role', 'Role')}").bold = True
-                p.add_run(f" | {exp.get('company', 'Company')}").italic = True
-                
-                duration = exp.get("duration", "")
-                if duration:
-                    p.add_run(f" ({duration})")
-                
-                # Handle bullets safely
-                bullets = exp.get("bullets", [])
-                if isinstance(bullets, list):
-                    for bullet in bullets:
-                        doc.add_paragraph(str(bullet), style='List Bullet')
-                elif isinstance(bullets, str):
-                    doc.add_paragraph(bullets, style='List Bullet')
-                    
-            elif isinstance(exp, str):
-                # If LLM returned a plain string instead of dict
-                doc.add_paragraph(exp, style='List Bullet')
-            
-    # 4. Education Section
-    education_list = resume_json.get("education", [])
-    if education_list:
-        doc.add_heading("Education", level=1)
-        for edu in education_list:
-            p = doc.add_paragraph()
-            
-            if isinstance(edu, dict):
-                p.add_run(f"{edu.get('degree', 'Degree')}").bold = True
-                
-                institution = edu.get("institution", edu.get("school", ""))
-                year = edu.get("year", edu.get("date", ""))
-                
-                edu_text = ""
-                if institution:
-                    edu_text += f" - {institution}"
-                if year:
-                    edu_text += f" ({year})"
-                    
-                if edu_text:
-                    p.add_run(edu_text)
-                    
-            elif isinstance(edu, str):
-                # If LLM returned a plain string
-                p.add_run(edu).bold = True
-        
-    # 5. Projects Section
-    projects_list = resume_json.get("projects", [])
-    if projects_list:
-        doc.add_heading("Projects", level=1)
-        for proj in projects_list:
-            if isinstance(proj, dict):
-                p = doc.add_paragraph()
-                p.add_run(f"{proj.get('name', 'Project Name')}").bold = True
-                
-                tech = proj.get("technologies", [])
-                if isinstance(tech, list) and tech:
-                    p.add_run(f" (Technologies: {', '.join([str(t) for t in tech])})").italic = True
-                elif isinstance(tech, str) and tech:
-                    p.add_run(f" (Technologies: {tech})").italic = True
-                    
-                desc = proj.get("description", "")
-                if isinstance(desc, str) and desc:
-                    doc.add_paragraph(desc)
-                elif isinstance(desc, list): # Sometimes descriptions are bulleted lists
-                    for d in desc:
-                        doc.add_paragraph(str(d), style='List Bullet')
-                        
-            elif isinstance(proj, str):
-                # If LLM returned a plain string
-                doc.add_paragraph(proj, style='List Bullet')
+_BULLET_CHARS = " \t•●▪◦‣○■➢✓*-–—"
 
-    # Save the document
-    doc.save(output_path)
-    return output_path
+
+def _norm(text: str) -> str:
+    """Normalize a bullet for comparison: strip markers, collapse spaces, lowercase."""
+    return re.sub(r"\s+", " ", text.strip(_BULLET_CHARS)).lower()
+
+
+def apply_replacements(text: str, replacements: Mapping[str, str]) -> str:
+    """Return the accepted rewrite for ``text`` if it matches an original bullet.
+
+    Matching is exact after normalization, falling back to a 0.9 similarity
+    ratio so small whitespace/punctuation differences from the LLM's copy of the
+    bullet still match.
+    """
+    if not replacements:
+        return text
+    target = _norm(text)
+    best_ratio, best = 0.0, None
+    for original, improved in replacements.items():
+        candidate = _norm(original)
+        if candidate == target:
+            return improved
+        ratio = difflib.SequenceMatcher(None, candidate, target).ratio()
+        if ratio > best_ratio:
+            best_ratio, best = ratio, improved
+    return best if best is not None and best_ratio >= 0.9 else text
+
+
+def _to_bytes(document: Any) -> bytes:
+    """Serialize a python-docx Document to bytes."""
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _contact_line(contact: Optional[Mapping[str, str]]) -> str:
+    """Join available contact fields with separators."""
+    if not contact:
+        return ""
+    keys = ("email", "phone", "linkedin", "github")
+    return " | ".join(contact[k] for k in keys if contact.get(k))
+
+
+def generate_docx(
+    resume: Mapping[str, Any],
+    contact: Optional[Mapping[str, str]] = None,
+    replacements: Optional[Mapping[str, str]] = None,
+) -> bytes:
+    """Generate a clean, single-column DOCX resume.
+
+    Args:
+        resume: A ``ResumeAnalysis``-shaped dict.
+        contact: Contact details extracted locally from the original text
+            (never sent to an AI provider).
+        replacements: Accepted ``{original_bullet: improved_bullet}`` rewrites.
+
+    Returns:
+        The DOCX file contents.
+    """
+    replacements = replacements or {}
+    doc = docx.Document()
+
+    heading = doc.add_heading(resume.get("name") or "Your Name", 0)
+    heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    line = _contact_line(contact)
+    if line:
+        doc.add_paragraph(line).alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+
+    skills = resume.get("skills") or []
+    if skills:
+        doc.add_heading("Skills", level=1)
+        doc.add_paragraph(", ".join(str(s) for s in skills))
+
+    experience = resume.get("experience") or []
+    if experience:
+        doc.add_heading("Professional Experience", level=1)
+        for job in experience:
+            p = doc.add_paragraph()
+            p.add_run(job.get("role") or "Role").bold = True
+            if job.get("company"):
+                p.add_run(f" | {job['company']}").italic = True
+            if job.get("duration"):
+                p.add_run(f" ({job['duration']})")
+            for bullet in job.get("bullets") or []:
+                doc.add_paragraph(apply_replacements(str(bullet), replacements), style="List Bullet")
+
+    projects = resume.get("projects") or []
+    if projects:
+        doc.add_heading("Projects", level=1)
+        for proj in projects:
+            p = doc.add_paragraph()
+            p.add_run(proj.get("name") or "Project").bold = True
+            tech = proj.get("technologies") or []
+            if tech:
+                p.add_run(f" (Technologies: {', '.join(str(t) for t in tech)})").italic = True
+            for desc_line in str(proj.get("description") or "").split("\n"):
+                if desc_line.strip():
+                    doc.add_paragraph(apply_replacements(desc_line, replacements), style="List Bullet")
+
+    education = resume.get("education") or []
+    if education:
+        doc.add_heading("Education", level=1)
+        for edu in education:
+            p = doc.add_paragraph()
+            p.add_run(edu.get("degree") or "Degree").bold = True
+            if edu.get("institution"):
+                p.add_run(f" - {edu['institution']}")
+            if edu.get("year"):
+                p.add_run(f" ({edu['year']})")
+
+    return _to_bytes(doc)
+
+
+def generate_cover_letter_docx(
+    letter: str,
+    name: str = "",
+    contact: Optional[Mapping[str, str]] = None,
+) -> bytes:
+    """Generate a DOCX cover letter with the candidate's name and contact line on top."""
+    doc = docx.Document()
+    if name:
+        doc.add_heading(name, level=1)
+    line = _contact_line(contact)
+    if line:
+        doc.add_paragraph(line)
+    for paragraph in re.split(r"\n\s*\n", letter.strip()):
+        doc.add_paragraph(" ".join(paragraph.split()))
+    return _to_bytes(doc)

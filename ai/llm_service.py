@@ -1,81 +1,108 @@
+"""Provider fallback chain with JSON repair and pydantic validation."""
 import logging
-from typing import Dict, Any, Optional
-from ai.openrouter_provider import call_openrouter
-from ai.groq_provider import call_groq
-from ai.sambanova_provider import call_sambanova
-from ai.gemini_provider import call_gemini
-from ai.json_helper import clean_and_parse_json
+from typing import Callable, Optional, TypeVar
 
-logging.basicConfig(level=logging.INFO)
+from pydantic import BaseModel, ValidationError
+
+from ai import prompts
+from ai.gemini_provider import call_gemini
+from ai.groq_provider import call_groq
+from ai.json_helper import clean_and_parse_json
+from ai.honesty import sanitize_suggestions
+from ai.schemas import CoverLetter, InterviewPrep, ResumeAnalysis
+
 logger = logging.getLogger(__name__)
 
-# Heavily reinforced system prompts to fight LLM laziness and force bullet generation
-SYSTEM_PROMPT_RESUME_ONLY = """You are an expert ATS (Applicant Tracking System) parser. You MUST extract EVERY SINGLE DETAIL from the resume without summarizing, omitting, or truncating content. 
-Return a strict JSON object with these exact keys:
-- "name" (string)
-- "email" (string)
-- "phone" (string)
-- "skills" (array of strings)
-- "experience" (array of objects with "role", "company", "duration", and "bullets" array of strings. DO NOT skip or summarize any bullet points!)
-- "education" (array of objects with "degree", "institution", "year")
-- "projects" (array of objects with "name", "technologies" array, "description" string)
-- "suggestions" (array of objects with "original_bullet", "improved_bullet", "reason"). YOU MUST PROVIDE AT LEAST 3 DETAILED, ACTIONABLE BULLET POINT SUGGESTIONS.
-Do not leave any arrays empty if the data exists in the text."""
+ModelT = TypeVar("ModelT", bound=BaseModel)
+ProviderFn = Callable[[str, str], str]
 
-SYSTEM_PROMPT_WITH_JD = """You are an expert ATS optimization engine. Compare the provided resume text against the Job Description. 
-Return a strict JSON object matching the core layout (name, email, phone, skills, experience, education, projects). 
-Additionally, you MUST include:
-- "match_percentage": (integer) A number from 0 to 100 representing how well the overall resume matches the JD.
-- "missing_skills": (array of strings) Core keywords from the JD missing in the resume. IMPORTANT: Scan the ENTIRE resume (Experience and Projects) before deciding a skill is missing!
-- "suggestions": (array of objects with "original_bullet", "improved_bullet", "reason"). YOU MUST PROVIDE AT LEAST 3 TAILORED SUGGESTIONS showing how to rewrite weak lines to better match the keywords requested in the JD.
-Do not summarize the experience sections. Extract all original bullets completely."""
+# Fallback order. Each entry: (display name, provider function).
+PROVIDERS: list[tuple[str, ProviderFn]] = [
+    ("Groq", call_groq),
+    ("Gemini", call_gemini),
+]
 
-def process_resume_pipeline(resume_text: str, jd_text: Optional[str] = None) -> Dict[str, Any]:
+
+class AllProvidersFailed(RuntimeError):
+    """Raised when no provider returned a valid, schema-conforming response."""
+
+
+def _short_error(exc: Exception, limit: int = 160) -> str:
+    """Return a one-line, truncated error description safe to show in the UI."""
+    if isinstance(exc, ValidationError):
+        return f"response failed schema validation ({exc.error_count()} error(s))"
+    text = " ".join(str(exc).split())
+    return f"{type(exc).__name__}: {text[:limit]}{'...' if len(text) > limit else ''}"
+
+
+def run_with_fallback(
+    user_prompt: str,
+    system_prompt: str,
+    schema: type[ModelT],
+    providers: Optional[list[tuple[str, ProviderFn]]] = None,
+) -> tuple[ModelT, str]:
+    """Call providers in order until one returns JSON that validates against ``schema``.
+
+    A provider is skipped on a network/API error, unparseable JSON, or a
+    pydantic validation failure.
+
+    Returns:
+        The validated model and the name of the provider that produced it.
+
+    Raises:
+        AllProvidersFailed: listing one short reason per provider.
+    """
+    errors: list[str] = []
+    for name, call in providers if providers is not None else PROVIDERS:
+        try:
+            logger.info("Attempting %s...", name)
+            data = clean_and_parse_json(call(user_prompt, system_prompt))
+            return schema.model_validate(data), name
+        except Exception as exc:  # noqa: BLE001 - any failure moves to the next provider
+            logger.warning("%s failed: %s", name, exc)
+            errors.append(f"{name} -> {_short_error(exc)}")
+    raise AllProvidersFailed("All AI providers failed:\n" + "\n".join(f"- {e}" for e in errors))
+
+
+def process_resume_pipeline(
+    resume_text: str,
+    jd_text: Optional[str] = None,
+    missing_skills: Optional[list[str]] = None,
+) -> tuple[ResumeAnalysis, str]:
+    """Parse a (redacted) resume and produce honest rewrite suggestions.
+
+    Suggestions whose original bullet is not in the resume are dropped, and
+    numbers the AI invented are replaced with placeholders.
+
+    Args:
+        resume_text: Resume text with contact details already redacted.
+        jd_text: Optional job description.
+        missing_skills: JD skills the deterministic matcher did not find.
+
+    Returns:
+        The validated analysis and the provider name.
+    """
     if jd_text and jd_text.strip():
-        combined_payload = f"JOB DESCRIPTION:\n{jd_text}\n\nRESUME TEXT:\n{resume_text}"
-        return analyze_resume(combined_payload, SYSTEM_PROMPT_WITH_JD)
+        missing = ", ".join(missing_skills) if missing_skills else "none"
+        payload = (
+            f"JOB DESCRIPTION:\n{jd_text}\n\nJD SKILLS MISSING FROM THE RESUME: {missing}\n\n"
+            f"RESUME TEXT:\n{resume_text}"
+        )
+        analysis, provider = run_with_fallback(payload, prompts.SYSTEM_PROMPT_WITH_JD, ResumeAnalysis)
     else:
-        return analyze_resume(resume_text, SYSTEM_PROMPT_RESUME_ONLY)
+        analysis, provider = run_with_fallback(resume_text, prompts.SYSTEM_PROMPT_RESUME_ONLY, ResumeAnalysis)
+    analysis.suggestions = sanitize_suggestions(analysis.suggestions, resume_text)
+    return analysis, provider
 
-def analyze_resume(resume_text: str, system_prompt: str) -> Dict[str, Any]:
-    errors = []
-    
-    # Tier 1: OpenRouter
-    try:
-        logger.info("🚀 [Tier 1] Attempting OpenRouter Cluster (NVIDIA/Tencent)...")
-        response = call_openrouter(resume_text, system_prompt)
-        return _parse_json_response(response)
-    except Exception as e:
-        errors.append(f"OpenRouter: {str(e)}")
-        logger.warning("⚠️ OpenRouter failed. Falling back to Groq...")
 
-    # Tier 2: Groq
-    try:
-        logger.info("⚡ [Tier 2] Attempting Groq...")
-        response = call_groq(resume_text, system_prompt)
-        return _parse_json_response(response)
-    except Exception as e:
-        errors.append(f"Groq: {str(e)}")
-        logger.warning("⚠️ Groq failed. Falling back to SambaNova...")
+def generate_cover_letter(resume_text: str, jd_text: str) -> tuple[CoverLetter, str]:
+    """Write a 250-300 word cover letter from a (redacted) resume and a job description."""
+    payload = f"JOB DESCRIPTION:\n{jd_text}\n\nRESUME TEXT:\n{resume_text}"
+    return run_with_fallback(payload, prompts.SYSTEM_PROMPT_COVER_LETTER, CoverLetter)
 
-    # Tier 3: SambaNova
-    try:
-        logger.info("🧠 [Tier 3] Attempting SambaNova...")
-        response = call_sambanova(resume_text, system_prompt)
-        return _parse_json_response(response)
-    except Exception as e:
-        errors.append(f"SambaNova: {str(e)}")
-        logger.warning("⚠️ SambaNova failed. Falling back to Gemini...")
 
-    # Tier 4: Gemini (Safety Net)
-    try:
-        logger.info("🛡️ [Tier 4] Attempting Gemini Safety Net...")
-        response = call_gemini(resume_text, system_prompt)
-        return _parse_json_response(response)
-    except Exception as e:
-        errors.append(f"Gemini: {str(e)}")
-        
-    raise RuntimeError("ALL CHANNELS FAILED:\n" + " | ".join(errors))
-
-def _parse_json_response(response_text: str) -> Dict[str, Any]:
-    return clean_and_parse_json(response_text)
+def generate_interview_prep(resume_text: str, jd_text: Optional[str] = None) -> tuple[InterviewPrep, str]:
+    """Produce 8 likely interview questions with tips grounded in the candidate's experience."""
+    jd_part = f"JOB DESCRIPTION:\n{jd_text}\n\n" if jd_text and jd_text.strip() else ""
+    payload = f"{jd_part}RESUME TEXT:\n{resume_text}"
+    return run_with_fallback(payload, prompts.SYSTEM_PROMPT_INTERVIEW, InterviewPrep)
