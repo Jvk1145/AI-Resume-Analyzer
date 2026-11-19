@@ -1,6 +1,7 @@
 import os
 import requests
 import logging
+from ai.secrets_loader import get_secret
 from dotenv import load_dotenv
 from ai.model_resolver import resolve_model
 
@@ -30,9 +31,9 @@ def call_gemini(prompt: str, system_prompt: str) -> str:
     """
     Calls Gemini API directly via the native REST route.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = get_secret("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set in the environment variables.")
+        raise ValueError("GEMINI_API_KEY is not set in environment variables or Streamlit secrets.")
 
     model = resolve_model(
         "Gemini", "GEMINI_MODEL", GEMINI_PREFERRED_MODELS,

@@ -1,6 +1,7 @@
 import os
 import random
 import logging
+from ai.secrets_loader import get_secret
 import requests
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -8,14 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Gather your 4 specific OpenRouter keys into a rotating pool
-OR_KEY_POOL = [
-    os.getenv("OPENROUTER_API_KEY_MAIN"),
-    os.getenv("OPENROUTER_API_KEY_LAGUNA"),
-    os.getenv("OPENROUTER_API_KEY_NVIDIA"),
-    os.getenv("OPENROUTER_API_KEY_COHERE")
+# Names of your OpenRouter keys; read on each call so newly added secrets are picked up.
+OR_KEY_NAMES = [
+    "OPENROUTER_API_KEY_MAIN",
+    "OPENROUTER_API_KEY_LAGUNA",
+    "OPENROUTER_API_KEY_NVIDIA",
+    "OPENROUTER_API_KEY_COHERE",
 ]
-OR_KEY_POOL = [k for k in OR_KEY_POOL if k]
 
 # Preferred free models, in order. Any that OpenRouter no longer lists are dropped automatically.
 # Override with OPENROUTER_MODELS (comma-separated) in secrets.
@@ -37,7 +37,7 @@ def _get_models() -> list:
     if _resolved_models is not None:
         return _resolved_models
 
-    override = os.getenv("OPENROUTER_MODELS")
+    override = get_secret("OPENROUTER_MODELS")
     if override:
         _resolved_models = [m.strip() for m in override.split(",") if m.strip()]
         return _resolved_models
@@ -64,13 +64,14 @@ def _get_models() -> list:
 
 def call_openrouter(prompt: str, system_prompt: str) -> str:
     """Calls OpenRouter rotating through the key pool, with server-side model fallbacks."""
-    if not OR_KEY_POOL:
-        raise ValueError("No OpenRouter keys found in environment.")
+    key_pool = [k for k in (get_secret(n) for n in OR_KEY_NAMES) if k]
+    if not key_pool:
+        raise ValueError("No OpenRouter keys found in environment or Streamlit secrets.")
 
     models = _get_models()
 
     # Randomize the start key to balance the load across accounts
-    keys_to_try = OR_KEY_POOL.copy()
+    keys_to_try = key_pool.copy()
     random.shuffle(keys_to_try)
 
     last_error = None

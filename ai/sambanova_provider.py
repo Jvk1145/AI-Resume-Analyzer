@@ -1,5 +1,6 @@
 import os
 import logging
+from ai.secrets_loader import get_secret
 from openai import OpenAI
 from dotenv import load_dotenv
 from ai.model_resolver import resolve_model
@@ -21,9 +22,9 @@ def call_sambanova(prompt: str, system_prompt: str) -> str:
     """
     Calls SambaNova Cloud API with your active key.
     """
-    api_key = os.getenv("SAMBANOVA_API_KEY")
+    api_key = get_secret("SAMBANOVA_API_KEY")
     if not api_key:
-        raise ValueError("SAMBANOVA_API_KEY is not set in the environment variables.")
+        raise ValueError("SAMBANOVA_API_KEY is not set in environment variables or Streamlit secrets.")
 
     client = OpenAI(
         base_url="https://api.sambanova.ai/v1",

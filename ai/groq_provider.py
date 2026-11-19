@@ -1,5 +1,6 @@
 import os
 import logging
+from ai.secrets_loader import get_secret
 from openai import OpenAI
 from dotenv import load_dotenv
 from ai.model_resolver import resolve_model
@@ -21,9 +22,9 @@ def call_groq(prompt: str, system_prompt: str) -> str:
     """
     Calls Groq API using your active key.
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = get_secret("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("GROQ_API_KEY is not set in the environment variables.")
+        raise ValueError("GROQ_API_KEY is not set in environment variables or Streamlit secrets.")
 
     client = OpenAI(
         base_url="https://api.groq.com/openai/v1",

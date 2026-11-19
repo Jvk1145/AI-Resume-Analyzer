@@ -1,5 +1,6 @@
 import os
 import logging
+from ai.secrets_loader import get_secret
 from typing import Callable, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ def resolve_model(
 
     The result is cached for the life of the process so discovery runs once per provider.
     """
-    override = os.getenv(env_var)
+    override = get_secret(env_var)
     if override:
         return override.strip()
 
