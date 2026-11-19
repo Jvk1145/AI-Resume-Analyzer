@@ -102,7 +102,7 @@ GEMINI_API_KEY_2=
 # GEMINI_MODEL=gemini-3.8-flash
 ```
 
-Both providers have free tiers. If every key fails (for example, all rate-limited), the app shows a short
+The app asks each provider which models are live and uses the first available one from a preferred list (`ai/model_resolver.py`), so a retired model doesn't break it. Both providers have free tiers. If every key fails (for example, all rate-limited), the app shows a short
 reason for each provider.
 
 On Streamlit Community Cloud, put the same keys in the app's **Secrets** settings instead of `.env`. Note that

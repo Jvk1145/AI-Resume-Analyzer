@@ -1,16 +1,23 @@
-"""Groq provider (OpenAI-compatible endpoint) with two-key fallback."""
+"""Groq provider (OpenAI-compatible endpoint) with two-key fallback and model auto-discovery."""
 import logging
-import os
 
 from openai import OpenAI
 
 from ai.keys import get_keys
+from ai.model_resolver import resolve_model
 
 logger = logging.getLogger(__name__)
 
-# Override with GROQ_MODEL in .env when Groq retires a model.
-DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
-TIMEOUT_SECONDS = 45.0
+# Tried in order; the first one Groq currently serves is used. Override with GROQ_MODEL.
+GROQ_PREFERRED_MODELS = [
+    "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "qwen/qwen3-32b",
+    "openai/gpt-oss-20b",
+    "llama-3.1-8b-instant",
+]
+TIMEOUT_SECONDS = 60.0
 
 
 def call_groq(prompt: str, system_prompt: str) -> str:
@@ -22,18 +29,18 @@ def call_groq(prompt: str, system_prompt: str) -> str:
     """
     keys = get_keys("GROQ_API_KEY")
     if not keys:
-        raise ValueError("GROQ_API_KEY is not set.")
+        raise ValueError("GROQ_API_KEY is not set in environment variables or Streamlit secrets.")
 
     last_error: Exception | None = None
     for idx, api_key in enumerate(keys, start=1):
         try:
-            client = OpenAI(
-                base_url="https://api.groq.com/openai/v1",
-                api_key=api_key,
-                timeout=TIMEOUT_SECONDS,
+            client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key, timeout=TIMEOUT_SECONDS)
+            model = resolve_model(
+                "Groq", "GROQ_MODEL", GROQ_PREFERRED_MODELS,
+                lambda: [m.id for m in client.models.list().data],
             )
             response = client.chat.completions.create(
-                model=os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL),
+                model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
